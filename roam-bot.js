@@ -1,7 +1,7 @@
 /****************************************************
- * ROAM POOL ALERT BOT (SOLANA + BNB)
- * - Solana: realtime (pool-only)
- * - BNB: HTTP polling (1 phút)
+ * ROAM POOL ALERT BOT (SOL + BNB)
+ * - NO WebSocket (anti 401)
+ * - HTTP polling mỗi 1 phút
  * - Có web ping cho Render / UptimeRobot
  ****************************************************/
 
@@ -40,19 +40,19 @@ http
 
 // ===== SOLANA =====
 const SOL_RPC = "https://rpc.ankr.com/solana";
+const solConnection = new Connection(SOL_RPC, "confirmed");
 
 const SOL_MINT = new PublicKey(
   "RoamA1USA8xjvpTJZ6RvvxyDRzNh6GCA1zVGKSiMVkn"
 );
 
-const SOL_POOL = new PublicKey(
-  "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
-);
-
+// POOL TOKEN ACCOUNT
+const SOL_POOL = "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X";
 const SOL_MIN_AMOUNT = 50;
 
 // ===== BNB =====
 const BSC_HTTP = "https://rpc.ankr.com/bsc";
+const bscProvider = new ethers.JsonRpcProvider(BSC_HTTP);
 
 const BNB_TOKEN =
   "0x3fefe29da25bea166fb5f6ade7b5976d2b0e586b";
@@ -65,81 +65,91 @@ const BNB_DEV =
 
 const BNB_MIN_AMOUNT = 50;
 
-// ⏱️ CHECK MỖI 60 GIÂY (bạn có thể đổi 120000 = 2 phút)
-const BNB_POLL_INTERVAL = 60_000;
+// ⏱️ polling 1 phút
+const POLL_INTERVAL = 60_000;
 
 /* ================= START ================= */
 
-console.log("🚀 ROAM BOT STARTED (SOL + BNB)");
-bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG");
+console.log("🚀 ROAM BOT STARTED (HTTP POLLING)");
+bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG (HTTP polling)");
 
-/* ================= SOLANA LISTENER ================= */
+/* ================= SOLANA POLLING ================= */
 
-const solConnection = new Connection(SOL_RPC, "confirmed");
+let lastSolSlot = await solConnection.getSlot();
 
-solConnection.onLogs(
-  SOL_POOL,
-  async (logs) => {
-    try {
-      const tx = await solConnection.getParsedTransaction(logs.signature, {
+setInterval(async () => {
+  try {
+    const currentSlot = await solConnection.getSlot();
+    if (currentSlot <= lastSolSlot) return;
+
+    const blocks = [];
+    for (let s = lastSolSlot + 1; s <= currentSlot; s++) {
+      blocks.push(s);
+    }
+
+    for (const slot of blocks) {
+      const block = await solConnection.getBlock(slot, {
         maxSupportedTransactionVersion: 0,
       });
-      if (!tx || !tx.meta) return;
+      if (!block) continue;
 
-      const pre = tx.meta.preTokenBalances || [];
-      const post = tx.meta.postTokenBalances || [];
+      for (const tx of block.transactions) {
+        const meta = tx.meta;
+        if (!meta) continue;
 
-      for (let i = 0; i < post.length; i++) {
-        const p = post[i];
-        if (p.mint !== SOL_MINT.toString()) continue;
-        if (p.owner !== SOL_POOL.toString()) continue;
+        const pre = meta.preTokenBalances || [];
+        const post = meta.postTokenBalances || [];
 
-        const before = pre[i]?.uiTokenAmount.uiAmount || 0;
-        const after = p.uiTokenAmount.uiAmount || 0;
-        const diff = after - before;
+        for (let i = 0; i < post.length; i++) {
+          const p = post[i];
+          if (
+            p.mint === SOL_MINT.toString() &&
+            p.owner === SOL_POOL
+          ) {
+            const before = pre[i]?.uiTokenAmount.uiAmount || 0;
+            const after = p.uiTokenAmount.uiAmount || 0;
+            const diff = after - before;
 
-        if (diff >= SOL_MIN_AMOUNT) {
-          bot.sendMessage(
-            CHAT_ID,
-            `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nTx:\nhttps://solscan.io/tx/${logs.signature}`
-          );
+            if (diff >= SOL_MIN_AMOUNT) {
+              bot.sendMessage(
+                CHAT_ID,
+                `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nSlot: ${slot}`
+              );
+            }
+          }
         }
       }
-    } catch {}
-  },
-  "confirmed"
-);
+    }
 
-/* ================= BNB POLLING (HTTP – 1 PHÚT) ================= */
+    lastSolSlot = currentSlot;
+  } catch (e) {
+    console.log("SOL poll error (ignored)");
+  }
+}, POLL_INTERVAL);
 
-const bscProvider = new ethers.JsonRpcProvider(BSC_HTTP);
+/* ================= BNB POLLING ================= */
 
-const ERC20_ABI = [
-  "event Transfer(address indexed from, address indexed to, uint256 value)",
-];
-
-const bnbContract = new ethers.Contract(
-  BNB_TOKEN,
-  ERC20_ABI,
-  bscProvider
-);
-
-let lastBlock = await bscProvider.getBlockNumber();
+let lastBnbBlock = await bscProvider.getBlockNumber();
 
 setInterval(async () => {
   try {
     const currentBlock = await bscProvider.getBlockNumber();
-    if (currentBlock <= lastBlock) return;
+    if (currentBlock <= lastBnbBlock) return;
 
-    const events = await bnbContract.queryFilter(
+    const contract = new ethers.Contract(
+      BNB_TOKEN,
+      ["event Transfer(address indexed from, address indexed to, uint256 value)"],
+      bscProvider
+    );
+
+    const events = await contract.queryFilter(
       "Transfer",
-      lastBlock + 1,
+      lastBnbBlock + 1,
       currentBlock
     );
 
     for (const e of events) {
       const { from, to, value } = e.args;
-
       if (
         from.toLowerCase() !== BNB_DEV.toLowerCase() ||
         to.toLowerCase() !== BNB_POOL.toLowerCase()
@@ -155,8 +165,8 @@ setInterval(async () => {
       }
     }
 
-    lastBlock = currentBlock;
+    lastBnbBlock = currentBlock;
   } catch (e) {
     console.log("BNB poll error (ignored)");
   }
-}, BNB_POLL_INTERVAL);
+}, POLL_INTERVAL);
