@@ -1,7 +1,7 @@
 /****************************************************
  * ROAM POOL ALERT BOT (SOL + BNB)
- * - NO WebSocket (anti 401)
- * - HTTP polling mỗi 1 phút
+ * - NO WebSocket
+ * - SOL & BNB balance polling
  * - Có web ping cho Render / UptimeRobot
  ****************************************************/
 
@@ -46,9 +46,15 @@ const SOL_MINT = new PublicKey(
   "RoamA1USA8xjvpTJZ6RvvxyDRzNh6GCA1zVGKSiMVkn"
 );
 
-// POOL TOKEN ACCOUNT
-const SOL_POOL = "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X";
-const SOL_MIN_AMOUNT = 50;
+// 🔥 TOKEN ACCOUNT PHÂN PHỐI (POOL RÚT)
+const SOL_POOL_TOKEN_ACCOUNT = new PublicKey(
+  "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
+);
+
+const SOL_MIN_AMOUNT = 100;
+const SOL_POLL_INTERVAL = 60_000; // 1 phút
+
+let lastSolBalance = null;
 
 // ===== BNB =====
 const BSC_HTTP = "https://rpc.ankr.com/bsc";
@@ -64,64 +70,34 @@ const BNB_DEV =
   "0x5555601c3f86d0fF98b3a09C17fe5E0C597EC0Ce";
 
 const BNB_MIN_AMOUNT = 50;
-
-// ⏱️ polling 1 phút
-const POLL_INTERVAL = 60_000;
+const BNB_POLL_INTERVAL = 60_000;
 
 /* ================= START ================= */
 
-console.log("🚀 ROAM BOT STARTED (HTTP POLLING)");
-bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG (HTTP polling)");
+console.log("🚀 ROAM BOT STARTED (BALANCE POLLING)");
+bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG");
 
-/* ================= SOLANA (BALANCE POLLING – NO WS) ================= */
+/* ================= SOLANA POLLING ================= */
 
-import { Connection, PublicKey } from "@solana/web3.js";
-
-// RPC public (không key, ổn định với polling)
-const SOL_RPC = "https://api.mainnet-beta.solana.com";
-const solConnection = new Connection(SOL_RPC, "confirmed");
-
-// ROAM mint
-const SOL_MINT = new PublicKey(
-  "RoamA1USA8xjvpTJZ6RvvxyDRzNh6GCA1zVGKSiMVkn"
-);
-
-// 🔥 TOKEN ACCOUNT PHÂN PHỐI (POOL RÚT)
-const SOL_POOL_TOKEN_ACCOUNT = new PublicKey(
-  "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
-);
-
-// Ngưỡng báo (tuỳ chỉnh)
-const SOL_MIN_AMOUNT = 100; // ví dụ 100 ROAM
-
-// Chu kỳ polling (1–2 phút)
-const SOL_POLL_INTERVAL = 60_000; // 60s (đổi 120_000 nếu muốn 2 phút)
-
-// Lưu balance lần trước
-let lastSolBalance = null;
-
-// Hàm lấy balance UI (ROAM)
-async function getPoolBalance() {
+async function getSolBalance() {
   const res = await solConnection.getTokenAccountBalance(
     SOL_POOL_TOKEN_ACCOUNT
   );
   return res?.value?.uiAmount ?? 0;
 }
 
-// Init balance ban đầu
 (async () => {
   try {
-    lastSolBalance = await getPoolBalance();
+    lastSolBalance = await getSolBalance();
     console.log("🔵 SOL init balance:", lastSolBalance);
-  } catch (e) {
-    console.log("SOL init error (ignored)");
+  } catch {
+    console.log("SOL init error");
   }
 })();
 
-// Polling
 setInterval(async () => {
   try {
-    const current = await getPoolBalance();
+    const current = await getSolBalance();
     if (lastSolBalance === null) {
       lastSolBalance = current;
       return;
@@ -131,16 +107,14 @@ setInterval(async () => {
     if (diff >= SOL_MIN_AMOUNT) {
       bot.sendMessage(
         CHAT_ID,
-        `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nBalance hiện tại: ${current}`
+        `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nBalance: ${current}`
       );
     }
-
     lastSolBalance = current;
-  } catch (e) {
-    console.log("SOL poll error (ignored)");
+  } catch {
+    console.log("SOL poll error");
   }
 }, SOL_POLL_INTERVAL);
-
 
 /* ================= BNB POLLING ================= */
 
@@ -181,7 +155,7 @@ setInterval(async () => {
     }
 
     lastBnbBlock = currentBlock;
-  } catch (e) {
-    console.log("BNB poll error (ignored)");
+  } catch {
+    console.log("BNB poll error");
   }
-}, POLL_INTERVAL);
+}, BNB_POLL_INTERVAL);
