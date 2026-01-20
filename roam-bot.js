@@ -1,44 +1,55 @@
 /****************************************************
  * ROAM POOL ALERT BOT (SOLANA + BNB)
- * - Theo dõi dev nạp pool
- * - Gửi thông báo Telegram
- * - Chạy tốt trên Render / VPS
+ * + MINI WEB SERVER (UPTIME PING)
  ****************************************************/
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import TelegramBot from "node-telegram-bot-api";
 import { ethers } from "ethers";
+import http from "http";
 
-/* ================= TELEGRAM ================= */
+/* ================= ENV ================= */
 
-// ⚠️ DÙNG ENV (Render / Cloud)
 const TG_TOKEN = process.env.TG_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
+const PORT = process.env.PORT || 3000;
 
 if (!TG_TOKEN || !CHAT_ID) {
-  console.error("❌ THIẾU TG_TOKEN hoặc CHAT_ID trong ENV");
+  console.error("❌ THIẾU TG_TOKEN hoặc CHAT_ID");
   process.exit(1);
 }
 
+/* ================= TELEGRAM ================= */
+
 const bot = new TelegramBot(TG_TOKEN, { polling: false });
+
+/* ================= MINI WEB SERVER ================= */
+/* Dùng cho Render + UptimeRobot */
+
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ROAM BOT IS RUNNING 🚀");
+  })
+  .listen(PORT, () => {
+    console.log(`🌐 Web server listening on port ${PORT}`);
+  });
 
 /* ================= CONFIG ================= */
 
 // ===== SOLANA =====
-const SOL_RPC = "https://api.mainnet-beta.solana.com";
+// 👉 RPC nhẹ + ổn định hơn
+const SOL_RPC = "https://rpc.ankr.com/solana";
+
 const SOL_MINT = new PublicKey(
   "RoamA1USA8xjvpTJZ6RvvxyDRzNh6GCA1zVGKSiMVkn"
 );
 
-// POOL TOKEN ACCOUNT (ĐÃ XÁC NHẬN)
-const SOL_POOL_TOKEN_ACCOUNT =
-  "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X";
+// 🔥 POOL TOKEN ACCOUNT (CHỈ NGHE ĐÚNG CÁI NÀY)
+const SOL_POOL_TOKEN_ACCOUNT = new PublicKey(
+  "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
+);
 
-// DEV WALLET (OPTIONAL – dùng để check thêm)
-const SOL_DEV_WALLET =
-  "DSjPt6AtYu7NvKvVzxPkL2BMxrA3M4zK9jQaN1yunktg";
-
-// số ROAM tối thiểu mới báo
 const SOL_MIN_AMOUNT = 50;
 
 // ===== BNB =====
@@ -60,42 +71,49 @@ const BNB_MIN_AMOUNT = 50;
 console.log("🚀 ROAM BOT STARTED (SOL + BNB)");
 bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG");
 
-/* ================= SOLANA LISTENER ================= */
+/* ================= SOLANA LISTENER (NHẸ) ================= */
 
 const solConnection = new Connection(SOL_RPC, "confirmed");
 
-solConnection.onLogs("all", async (logs) => {
-  try {
-    const tx = await solConnection.getParsedTransaction(logs.signature, {
-      maxSupportedTransactionVersion: 0,
-    });
-    if (!tx || !tx.meta) return;
+/**
+ * 🔥 FIX OOM:
+ * - KHÔNG dùng onLogs("all")
+ * - Chỉ nghe LOG của POOL token account
+ */
+solConnection.onLogs(
+  SOL_POOL_TOKEN_ACCOUNT,
+  async (logs) => {
+    try {
+      const tx = await solConnection.getParsedTransaction(logs.signature, {
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!tx || !tx.meta) return;
 
-    const pre = tx.meta.preTokenBalances || [];
-    const post = tx.meta.postTokenBalances || [];
+      const pre = tx.meta.preTokenBalances || [];
+      const post = tx.meta.postTokenBalances || [];
 
-    for (let i = 0; i < post.length; i++) {
-      const p = post[i];
-      if (p.mint !== SOL_MINT.toString()) continue;
+      for (let i = 0; i < post.length; i++) {
+        const p = post[i];
+        if (p.mint !== SOL_MINT.toString()) continue;
+        if (p.owner !== SOL_POOL_TOKEN_ACCOUNT.toString()) continue;
 
-      // chỉ quan tâm pool token account
-      if (p.owner !== SOL_POOL_TOKEN_ACCOUNT) continue;
+        const before = pre[i]?.uiTokenAmount.uiAmount || 0;
+        const after = p.uiTokenAmount.uiAmount || 0;
+        const diff = after - before;
 
-      const before = pre[i]?.uiTokenAmount.uiAmount || 0;
-      const after = p.uiTokenAmount.uiAmount || 0;
-      const diff = after - before;
-
-      if (diff >= SOL_MIN_AMOUNT) {
-        bot.sendMessage(
-          CHAT_ID,
-          `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nTx:\nhttps://solscan.io/tx/${logs.signature}`
-        );
+        if (diff >= SOL_MIN_AMOUNT) {
+          bot.sendMessage(
+            CHAT_ID,
+            `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nTx:\nhttps://solscan.io/tx/${logs.signature}`
+          );
+        }
       }
+    } catch (e) {
+      // im lặng để không leak RAM
     }
-  } catch (e) {
-    // im lặng cho đỡ spam log
-  }
-});
+  },
+  "confirmed"
+);
 
 /* ================= BNB LISTENER ================= */
 
@@ -130,4 +148,3 @@ bnbContract.on("Transfer", (from, to, value, event) => {
     // ignore
   }
 });
-
