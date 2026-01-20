@@ -39,7 +39,7 @@ http
 /* ================= CONFIG ================= */
 
 // ===== SOLANA =====
-const SOL_RPC = "https://rpc.ankr.com/solana";
+const SOL_RPC = "https://api.mainnet-beta.solana.com";
 const solConnection = new Connection(SOL_RPC, "confirmed");
 
 const SOL_MINT = new PublicKey(
