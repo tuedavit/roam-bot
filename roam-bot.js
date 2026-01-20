@@ -57,7 +57,7 @@ const SOL_POLL_INTERVAL = 60_000; // 1 phút
 let lastSolBalance = null;
 
 // ===== BNB =====
-const BSC_HTTP = "https://rpc.ankr.com/bsc";
+const BSC_HTTP = "https://bsc.publicnode.com";
 const bscProvider = new ethers.JsonRpcProvider(BSC_HTTP);
 
 const BNB_TOKEN =
