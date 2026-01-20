@@ -73,59 +73,74 @@ const POLL_INTERVAL = 60_000;
 console.log("🚀 ROAM BOT STARTED (HTTP POLLING)");
 bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG (HTTP polling)");
 
-/* ================= SOLANA POLLING ================= */
+/* ================= SOLANA (BALANCE POLLING – NO WS) ================= */
 
-let lastSolSlot = await solConnection.getSlot();
+import { Connection, PublicKey } from "@solana/web3.js";
 
+// RPC public (không key, ổn định với polling)
+const SOL_RPC = "https://api.mainnet-beta.solana.com";
+const solConnection = new Connection(SOL_RPC, "confirmed");
+
+// ROAM mint
+const SOL_MINT = new PublicKey(
+  "RoamA1USA8xjvpTJZ6RvvxyDRzNh6GCA1zVGKSiMVkn"
+);
+
+// 🔥 TOKEN ACCOUNT PHÂN PHỐI (POOL RÚT)
+const SOL_POOL_TOKEN_ACCOUNT = new PublicKey(
+  "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
+);
+
+// Ngưỡng báo (tuỳ chỉnh)
+const SOL_MIN_AMOUNT = 100; // ví dụ 100 ROAM
+
+// Chu kỳ polling (1–2 phút)
+const SOL_POLL_INTERVAL = 60_000; // 60s (đổi 120_000 nếu muốn 2 phút)
+
+// Lưu balance lần trước
+let lastSolBalance = null;
+
+// Hàm lấy balance UI (ROAM)
+async function getPoolBalance() {
+  const res = await solConnection.getTokenAccountBalance(
+    SOL_POOL_TOKEN_ACCOUNT
+  );
+  return res?.value?.uiAmount ?? 0;
+}
+
+// Init balance ban đầu
+(async () => {
+  try {
+    lastSolBalance = await getPoolBalance();
+    console.log("🔵 SOL init balance:", lastSolBalance);
+  } catch (e) {
+    console.log("SOL init error (ignored)");
+  }
+})();
+
+// Polling
 setInterval(async () => {
   try {
-    const currentSlot = await solConnection.getSlot();
-    if (currentSlot <= lastSolSlot) return;
-
-    const blocks = [];
-    for (let s = lastSolSlot + 1; s <= currentSlot; s++) {
-      blocks.push(s);
+    const current = await getPoolBalance();
+    if (lastSolBalance === null) {
+      lastSolBalance = current;
+      return;
     }
 
-    for (const slot of blocks) {
-      const block = await solConnection.getBlock(slot, {
-        maxSupportedTransactionVersion: 0,
-      });
-      if (!block) continue;
-
-      for (const tx of block.transactions) {
-        const meta = tx.meta;
-        if (!meta) continue;
-
-        const pre = meta.preTokenBalances || [];
-        const post = meta.postTokenBalances || [];
-
-        for (let i = 0; i < post.length; i++) {
-          const p = post[i];
-          if (
-            p.mint === SOL_MINT.toString() &&
-            p.owner === SOL_POOL
-          ) {
-            const before = pre[i]?.uiTokenAmount.uiAmount || 0;
-            const after = p.uiTokenAmount.uiAmount || 0;
-            const diff = after - before;
-
-            if (diff >= SOL_MIN_AMOUNT) {
-              bot.sendMessage(
-                CHAT_ID,
-                `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nSlot: ${slot}`
-              );
-            }
-          }
-        }
-      }
+    const diff = current - lastSolBalance;
+    if (diff >= SOL_MIN_AMOUNT) {
+      bot.sendMessage(
+        CHAT_ID,
+        `🚨 ROAM SOL – DEV NẠP POOL\n\n+${diff} ROAM\nBalance hiện tại: ${current}`
+      );
     }
 
-    lastSolSlot = currentSlot;
+    lastSolBalance = current;
   } catch (e) {
     console.log("SOL poll error (ignored)");
   }
-}, POLL_INTERVAL);
+}, SOL_POLL_INTERVAL);
+
 
 /* ================= BNB POLLING ================= */
 
