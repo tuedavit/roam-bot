@@ -1,6 +1,8 @@
 /****************************************************
  * ROAM POOL ALERT BOT (SOLANA + BNB)
- * + MINI WEB SERVER (UPTIME PING)
+ * - Solana: realtime (pool-only)
+ * - BNB: HTTP polling (1 phút)
+ * - Có web ping cho Render / UptimeRobot
  ****************************************************/
 
 import { Connection, PublicKey } from "@solana/web3.js";
@@ -24,7 +26,6 @@ if (!TG_TOKEN || !CHAT_ID) {
 const bot = new TelegramBot(TG_TOKEN, { polling: false });
 
 /* ================= MINI WEB SERVER ================= */
-/* Dùng cho Render + UptimeRobot */
 
 http
   .createServer((req, res) => {
@@ -32,28 +33,26 @@ http
     res.end("ROAM BOT IS RUNNING 🚀");
   })
   .listen(PORT, () => {
-    console.log(`🌐 Web server listening on port ${PORT}`);
+    console.log(`🌐 Web listening on ${PORT}`);
   });
 
 /* ================= CONFIG ================= */
 
 // ===== SOLANA =====
-// 👉 RPC nhẹ + ổn định hơn
 const SOL_RPC = "https://rpc.ankr.com/solana";
 
 const SOL_MINT = new PublicKey(
   "RoamA1USA8xjvpTJZ6RvvxyDRzNh6GCA1zVGKSiMVkn"
 );
 
-// 🔥 POOL TOKEN ACCOUNT (CHỈ NGHE ĐÚNG CÁI NÀY)
-const SOL_POOL_TOKEN_ACCOUNT = new PublicKey(
+const SOL_POOL = new PublicKey(
   "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
 );
 
 const SOL_MIN_AMOUNT = 50;
 
 // ===== BNB =====
-const BSC_WSS = "wss://bsc-ws-node.nariox.org:443";
+const BSC_HTTP = "https://rpc.ankr.com/bsc";
 
 const BNB_TOKEN =
   "0x3fefe29da25bea166fb5f6ade7b5976d2b0e586b";
@@ -66,22 +65,20 @@ const BNB_DEV =
 
 const BNB_MIN_AMOUNT = 50;
 
+// ⏱️ CHECK MỖI 60 GIÂY (bạn có thể đổi 120000 = 2 phút)
+const BNB_POLL_INTERVAL = 60_000;
+
 /* ================= START ================= */
 
 console.log("🚀 ROAM BOT STARTED (SOL + BNB)");
 bot.sendMessage(CHAT_ID, "✅ ROAM BOT ĐÃ KHỞI ĐỘNG");
 
-/* ================= SOLANA LISTENER (NHẸ) ================= */
+/* ================= SOLANA LISTENER ================= */
 
 const solConnection = new Connection(SOL_RPC, "confirmed");
 
-/**
- * 🔥 FIX OOM:
- * - KHÔNG dùng onLogs("all")
- * - Chỉ nghe LOG của POOL token account
- */
 solConnection.onLogs(
-  SOL_POOL_TOKEN_ACCOUNT,
+  SOL_POOL,
   async (logs) => {
     try {
       const tx = await solConnection.getParsedTransaction(logs.signature, {
@@ -95,7 +92,7 @@ solConnection.onLogs(
       for (let i = 0; i < post.length; i++) {
         const p = post[i];
         if (p.mint !== SOL_MINT.toString()) continue;
-        if (p.owner !== SOL_POOL_TOKEN_ACCOUNT.toString()) continue;
+        if (p.owner !== SOL_POOL.toString()) continue;
 
         const before = pre[i]?.uiTokenAmount.uiAmount || 0;
         const after = p.uiTokenAmount.uiAmount || 0;
@@ -108,16 +105,14 @@ solConnection.onLogs(
           );
         }
       }
-    } catch (e) {
-      // im lặng để không leak RAM
-    }
+    } catch {}
   },
   "confirmed"
 );
 
-/* ================= BNB LISTENER ================= */
+/* ================= BNB POLLING (HTTP – 1 PHÚT) ================= */
 
-const bscProvider = new ethers.WebSocketProvider(BSC_WSS);
+const bscProvider = new ethers.JsonRpcProvider(BSC_HTTP);
 
 const ERC20_ABI = [
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -129,22 +124,39 @@ const bnbContract = new ethers.Contract(
   bscProvider
 );
 
-bnbContract.on("Transfer", (from, to, value, event) => {
-  try {
-    if (
-      from.toLowerCase() !== BNB_DEV.toLowerCase() ||
-      to.toLowerCase() !== BNB_POOL.toLowerCase()
-    )
-      return;
+let lastBlock = await bscProvider.getBlockNumber();
 
-    const amount = Number(ethers.formatUnits(value, 18));
-    if (amount >= BNB_MIN_AMOUNT) {
-      bot.sendMessage(
-        CHAT_ID,
-        `🚨 ROAM BNB – DEV NẠP POOL\n\n+${amount} ROAM\nTx:\nhttps://bscscan.com/tx/${event.transactionHash}`
-      );
+setInterval(async () => {
+  try {
+    const currentBlock = await bscProvider.getBlockNumber();
+    if (currentBlock <= lastBlock) return;
+
+    const events = await bnbContract.queryFilter(
+      "Transfer",
+      lastBlock + 1,
+      currentBlock
+    );
+
+    for (const e of events) {
+      const { from, to, value } = e.args;
+
+      if (
+        from.toLowerCase() !== BNB_DEV.toLowerCase() ||
+        to.toLowerCase() !== BNB_POOL.toLowerCase()
+      )
+        continue;
+
+      const amount = Number(ethers.formatUnits(value, 18));
+      if (amount >= BNB_MIN_AMOUNT) {
+        bot.sendMessage(
+          CHAT_ID,
+          `🚨 ROAM BNB – DEV NẠP POOL\n\n+${amount} ROAM\nTx:\nhttps://bscscan.com/tx/${e.transactionHash}`
+        );
+      }
     }
+
+    lastBlock = currentBlock;
   } catch (e) {
-    // ignore
+    console.log("BNB poll error (ignored)");
   }
-});
+}, BNB_POLL_INTERVAL);
