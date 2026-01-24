@@ -116,46 +116,70 @@ setInterval(async () => {
   }
 }, SOL_POLL_INTERVAL);
 
-/* ================= BNB POLLING ================= */
+/* ================= BNB BALANCE POLLING ================= */
 
-let lastBnbBlock = await bscProvider.getBlockNumber();
+const BSC_HTTP = "https://bsc-dataseed.binance.org";
+const bscProvider = new ethers.JsonRpcProvider(BSC_HTTP);
 
+// ROAM BNB token
+const BNB_TOKEN =
+  "0x3fefe29da25bea166fb5f6ade7b5976d2b0e586b";
+
+// Pool address
+const BNB_POOL =
+  "0xEf74d1FCEEA7d142d7A64A6AF969955839A17B83";
+
+// ERC20 ABI (balanceOf)
+const ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)"
+];
+
+const bnbContract = new ethers.Contract(
+  BNB_TOKEN,
+  ERC20_ABI,
+  bscProvider
+);
+
+let lastBnbBalance = null;
+let bnbDecimals = 18;
+
+// Init
+(async () => {
+  try {
+    bnbDecimals = await bnbContract.decimals();
+    const raw = await bnbContract.balanceOf(BNB_POOL);
+    lastBnbBalance = Number(
+      ethers.formatUnits(raw, bnbDecimals)
+    );
+
+    console.log("🟡 BNB init balance:", lastBnbBalance);
+  } catch {
+    console.log("BNB init error");
+  }
+})();
+
+// Poll
 setInterval(async () => {
   try {
-    const currentBlock = await bscProvider.getBlockNumber();
-    if (currentBlock <= lastBnbBlock) return;
+    if (lastBnbBalance === null) return;
 
-    const contract = new ethers.Contract(
-      BNB_TOKEN,
-      ["event Transfer(address indexed from, address indexed to, uint256 value)"],
-      bscProvider
+    const raw = await bnbContract.balanceOf(BNB_POOL);
+    const current = Number(
+      ethers.formatUnits(raw, bnbDecimals)
     );
 
-    const events = await contract.queryFilter(
-      "Transfer",
-      lastBnbBlock + 1,
-      currentBlock
-    );
+    const diff = current - lastBnbBalance;
 
-    for (const e of events) {
-      const { from, to, value } = e.args;
-      if (
-        from.toLowerCase() !== BNB_DEV.toLowerCase() ||
-        to.toLowerCase() !== BNB_POOL.toLowerCase()
-      )
-        continue;
-
-      const amount = Number(ethers.formatUnits(value, 18));
-      if (amount >= BNB_MIN_AMOUNT) {
-        bot.sendMessage(
-          CHAT_ID,
-          `🚨 ROAM BNB – DEV NẠP POOL\n\n+${amount} ROAM\nTx:\nhttps://bscscan.com/tx/${e.transactionHash}`
-        );
-      }
+    if (diff >= BNB_MIN_AMOUNT) {
+      bot.sendMessage(
+        CHAT_ID,
+        `🚨 ROAM BNB – DEV NẠP POOL\n\n+${diff} ROAM\nBalance: ${current}`
+      );
     }
 
-    lastBnbBlock = currentBlock;
+    lastBnbBalance = current;
   } catch {
     console.log("BNB poll error");
   }
-}, BNB_POLL_INTERVAL);
+}, 60_000);
