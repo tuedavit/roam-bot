@@ -52,7 +52,7 @@ const bsc = new ethers.JsonRpcProvider(BSC_RPC);
 
 // ⚠️ PAIR CONTRACT (KHÔNG PHẢI TOKEN)
 const BNB_POOL =
-  "0xEf74d1FCEEA7d142d7A64A6AF969955839A17B83".toLowerCase();
+  "0x30D59a44930B3994c116846EFe55fC8fcF608aa8".toLowerCase();
 
 // Topics UniV2 / Pancake
 const TOPIC_SYNC =
