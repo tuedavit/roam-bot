@@ -1,6 +1,6 @@
 /****************************************************
  * ROAM POOL ALERT BOT (SOL + BNB)
- * FINAL VERSION – STABLE
+ * FINAL EVENT VERSION
  ****************************************************/
 
 import { Connection, PublicKey } from "@solana/web3.js";
@@ -27,8 +27,8 @@ const bot = new TelegramBot(TG_TOKEN, { polling: false });
 
 http
   .createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("ROAM BOT RUNNING 🚀");
+    res.writeHead(200);
+    res.end("ROAM BOT RUNNING");
   })
   .listen(PORT, () => {
     console.log("🌐 Web listening on", PORT);
@@ -38,7 +38,7 @@ http
 
 // ===== SOL =====
 const SOL_RPC = "https://api.mainnet-beta.solana.com";
-const solConnection = new Connection(SOL_RPC, "confirmed");
+const sol = new Connection(SOL_RPC, "confirmed");
 
 const SOL_POOL = new PublicKey(
   "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
@@ -48,21 +48,21 @@ const SOL_MIN = 100;
 
 // ===== BNB =====
 const BSC_RPC = "https://bsc-dataseed.binance.org";
+const bsc = new ethers.JsonRpcProvider(BSC_RPC);
 
-const bscProvider = new ethers.JsonRpcProvider(BSC_RPC);
-
-const BNB_TOKEN =
-  "0x3fefe29da25bea166fb5f6ade7b5976d2b0e586b";
-
+// ⚠️ PAIR CONTRACT (KHÔNG PHẢI TOKEN)
 const BNB_POOL =
-  "0xEf74d1FCEEA7d142d7A64A6AF969955839A17B83";
+  "0xEf74d1FCEEA7d142d7A64A6AF969955839A17B83".toLowerCase();
 
-const BNB_MIN = 50;
+// Topics UniV2 / Pancake
+const TOPIC_SYNC =
+  "0x1c411e9a96e6d6aeaa2a4a4f7e9c4b7f2d78b5f6c3fbb6b7e3c3a0f3f2c7f3f9";
 
-const ERC20_ABI = [
-  "function balanceOf(address) view returns (uint256)",
-  "function decimals() view returns (uint8)"
-];
+const TOPIC_MINT =
+  "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fba7c4f8b9cfcba1d6a";
+
+const TOPIC_BURN =
+  "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496";
 
 /* ================= START ================= */
 
@@ -74,7 +74,7 @@ bot.sendMessage(CHAT_ID, "✅ ROAM BOT ONLINE");
 let lastSol = null;
 
 async function getSol() {
-  const r = await solConnection.getTokenAccountBalance(SOL_POOL);
+  const r = await sol.getTokenAccountBalance(SOL_POOL);
   return r?.value?.uiAmount ?? 0;
 }
 
@@ -95,7 +95,7 @@ setInterval(async () => {
     if (diff >= SOL_MIN) {
       bot.sendMessage(
         CHAT_ID,
-        `🚨 SOL NẠP POOL +${diff} ROAM\nBalance: ${cur}`
+        `🚨 ROAM SOL +${diff} ROAM\nBalance: ${cur}`
       );
     }
 
@@ -103,71 +103,48 @@ setInterval(async () => {
   } catch {}
 }, 60_000);
 
-/* ================= BNB EVENT LOG DETECTION ================= */
+/* ================= BNB EVENT LOG ================= */
 
-const BSC_RPC = "https://bsc-dataseed.binance.org";
+let lastBlock = 0;
 
-const bscProvider = new ethers.JsonRpcProvider(BSC_RPC);
-
-// Pool ROAM (PAIR CONTRACT - NOT TOKEN)
-const BNB_POOL =
-  "0xEf74d1FCEEA7d142d7A64A6AF969955839A17B83".toLowerCase();
-
-// Event topics (keccak hash)
-const TOPIC_SYNC =
-  "0x1c411e9a96e6d6aeaa2a4a4f7e9c4b7f2d78b5f6c3fbb6b7e3c3a0f3f2c7f3f9";
-
-const TOPIC_MINT =
-  "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fba7c4f8b9cfcba1d6a";
-
-const TOPIC_BURN =
-  "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496";
-
-// Track block
-let lastBnbChecked = 0;
-
-// Init block
 (async () => {
-  lastBnbChecked = await bscProvider.getBlockNumber();
-  console.log("🟡 BNB start block:", lastBnbChecked);
+  lastBlock = await bsc.getBlockNumber();
+  console.log("🟡 BNB start block:", lastBlock);
 })();
 
-// Poll logs
 setInterval(async () => {
   try {
-    const currentBlock = await bscProvider.getBlockNumber();
+    const now = await bsc.getBlockNumber();
 
-    if (currentBlock <= lastBnbChecked) return;
+    if (now <= lastBlock) return;
 
-    const logs = await bscProvider.getLogs({
-      fromBlock: lastBnbChecked + 1,
-      toBlock: currentBlock,
+    const logs = await bsc.getLogs({
+      fromBlock: lastBlock + 1,
+      toBlock: now,
       address: BNB_POOL,
       topics: [[TOPIC_SYNC, TOPIC_MINT, TOPIC_BURN]]
     });
 
-    for (const log of logs) {
-      let type = "UNKNOWN";
+    for (const l of logs) {
+      let type = "EVENT";
 
-      if (log.topics[0] === TOPIC_SYNC) type = "SYNC";
-      if (log.topics[0] === TOPIC_MINT) type = "ADD LP";
-      if (log.topics[0] === TOPIC_BURN) type = "REMOVE LP";
-
-      const tx = log.transactionHash;
+      if (l.topics[0] === TOPIC_SYNC) type = "SYNC";
+      if (l.topics[0] === TOPIC_MINT) type = "ADD LP";
+      if (l.topics[0] === TOPIC_BURN) type = "REMOVE LP";
 
       bot.sendMessage(
         CHAT_ID,
-        `🚨 ROAM BNB – ${type}\n\nTx:\nhttps://bscscan.com/tx/${tx}`
+        `🚨 ROAM BNB – ${type}\nTx:\nhttps://bscscan.com/tx/${l.transactionHash}`
       );
     }
 
     if (logs.length > 0) {
-      console.log(`🟡 BNB events: ${logs.length}`);
+      console.log("🟡 BNB events:", logs.length);
     }
 
-    lastBnbChecked = currentBlock;
+    lastBlock = now;
 
-  } catch (e) {
-    console.log("BNB log scan error");
+  } catch {
+    console.log("BNB scan error");
   }
 }, 60_000);
