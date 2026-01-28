@@ -103,52 +103,71 @@ setInterval(async () => {
   } catch {}
 }, 60_000);
 
-/* ================= BNB POLLING ================= */
+/* ================= BNB EVENT LOG DETECTION ================= */
 
-const bnbContract = new ethers.Contract(
-  BNB_TOKEN,
-  ERC20_ABI,
-  bscProvider
-);
+const BSC_RPC = "https://bsc-dataseed.binance.org";
 
-let lastBnb = null;
-let bnbDecimals = 18;
+const bscProvider = new ethers.JsonRpcProvider(BSC_RPC);
 
+// Pool ROAM (PAIR CONTRACT - NOT TOKEN)
+const BNB_POOL =
+  "0xEf74d1FCEEA7d142d7A64A6AF969955839A17B83".toLowerCase();
+
+// Event topics (keccak hash)
+const TOPIC_SYNC =
+  "0x1c411e9a96e6d6aeaa2a4a4f7e9c4b7f2d78b5f6c3fbb6b7e3c3a0f3f2c7f3f9";
+
+const TOPIC_MINT =
+  "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fba7c4f8b9cfcba1d6a";
+
+const TOPIC_BURN =
+  "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496";
+
+// Track block
+let lastBnbChecked = 0;
+
+// Init block
 (async () => {
-  try {
-    bnbDecimals = await bnbContract.decimals();
-
-    const raw = await bnbContract.balanceOf(BNB_POOL);
-
-    lastBnb = Number(
-      ethers.formatUnits(raw, bnbDecimals)
-    );
-
-    console.log("🟡 BNB init:", lastBnb);
-  } catch {}
+  lastBnbChecked = await bscProvider.getBlockNumber();
+  console.log("🟡 BNB start block:", lastBnbChecked);
 })();
 
+// Poll logs
 setInterval(async () => {
   try {
-    if (lastBnb === null) return;
+    const currentBlock = await bscProvider.getBlockNumber();
 
-    const raw = await bnbContract.balanceOf(BNB_POOL);
+    if (currentBlock <= lastBnbChecked) return;
 
-    const cur = Number(
-      ethers.formatUnits(raw, bnbDecimals)
-    );
+    const logs = await bscProvider.getLogs({
+      fromBlock: lastBnbChecked + 1,
+      toBlock: currentBlock,
+      address: BNB_POOL,
+      topics: [[TOPIC_SYNC, TOPIC_MINT, TOPIC_BURN]]
+    });
 
-    const diff = cur - lastBnb;
+    for (const log of logs) {
+      let type = "UNKNOWN";
 
-    if (diff >= BNB_MIN) {
+      if (log.topics[0] === TOPIC_SYNC) type = "SYNC";
+      if (log.topics[0] === TOPIC_MINT) type = "ADD LP";
+      if (log.topics[0] === TOPIC_BURN) type = "REMOVE LP";
+
+      const tx = log.transactionHash;
+
       bot.sendMessage(
         CHAT_ID,
-        `🚨 BNB NẠP POOL +${diff} ROAM\nBalance: ${cur}`
+        `🚨 ROAM BNB – ${type}\n\nTx:\nhttps://bscscan.com/tx/${tx}`
       );
     }
 
-    lastBnb = cur;
-  } catch {
-    console.log("BNB poll error");
+    if (logs.length > 0) {
+      console.log(`🟡 BNB events: ${logs.length}`);
+    }
+
+    lastBnbChecked = currentBlock;
+
+  } catch (e) {
+    console.log("BNB log scan error");
   }
 }, 60_000);
