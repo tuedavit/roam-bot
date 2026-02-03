@@ -1,6 +1,6 @@
 /****************************************************
  * ROAM POOL ALERT BOT (SOL + BNB)
- * BALANCE POLLING VERSION (STABLE)
+ * FULL STABLE VERSION - DINHTHACH
  ****************************************************/
 
 import { Connection, PublicKey } from "@solana/web3.js";
@@ -34,11 +34,12 @@ http.createServer((req, res) => {
 
 /* ================= CONFIG ================= */
 
-// ===== SOL =====
+// ===== SOLANA =====
 
 const SOL_RPC = "https://api.mainnet-beta.solana.com";
 const sol = new Connection(SOL_RPC, "confirmed");
 
+// Pool token account SOL
 const SOL_POOL = new PublicKey(
   "rVbzVr3ewmAn2YTD88KvsiKhfkxDngvGoh8DrRzmU5X"
 );
@@ -46,52 +47,60 @@ const SOL_POOL = new PublicKey(
 const SOL_MIN = 100;
 
 
-// ===== BNB =====
+// ===== BSC =====
 
-const BSC_RPC = "https://bsc-dataseed.binance.org";
+// Ankr RPC (YOUR KEY)
+const BSC_RPC =
+  "https://rpc.ankr.com/bsc/07fc082002e3d1636e2f2683138d132d9e00678cf2add5cdacccffaa127f1d29";
+
 const bsc = new ethers.JsonRpcProvider(BSC_RPC);
 
+// Pancake Pair ROAM/USDT
 const BNB_POOL =
   "0x30D59a44930B3994c116846EFe55fC8fcF608aa8".toLowerCase();
 
+// ROAM token
 const ROAM_TOKEN =
   "0x3fefe29da25bea166fb5f6ade7b5976d2b0e586b".toLowerCase();
 
-const BNB_MIN = 1000; // chỉnh tuỳ
+const BNB_MIN = 1000;
 
 
 /* ================= START ================= */
 
-console.log("🚀 ROAM BOT STARTED (BALANCE MODE)");
+console.log("🚀 ROAM BOT STARTED (FULL STABLE)");
 bot.sendMessage(CHAT_ID, "✅ ROAM BOT ONLINE (SOL + BNB)");
 
 
-/* ================= SOL ================= */
+/* ================= SOL POLLING ================= */
 
 let lastSol = null;
 
-async function getSol() {
+async function getSolBalance() {
   const r = await sol.getTokenAccountBalance(SOL_POOL);
   return r?.value?.uiAmount ?? 0;
 }
 
 (async () => {
   try {
-    lastSol = await getSol();
+    lastSol = await getSolBalance();
     console.log("🔵 SOL init:", lastSol);
-  } catch {}
+  } catch (e) {
+    console.log("SOL init error:", e.message);
+  }
 })();
 
 setInterval(async () => {
   try {
 
-    const cur = await getSol();
+    const cur = await getSolBalance();
 
     if (lastSol === null) return;
 
     const diff = cur - lastSol;
 
     if (diff >= SOL_MIN) {
+
       bot.sendMessage(
         CHAT_ID,
         `🚨 ROAM SOL – DEV NẠP POOL\n+${diff} ROAM\nBalance: ${cur}`
@@ -100,14 +109,14 @@ setInterval(async () => {
 
     lastSol = cur;
 
-  } catch {
-    console.log("SOL poll error");
+  } catch (e) {
+    console.log("SOL poll error:", e.message);
   }
 
 }, 60_000);
 
 
-/* ================= BNB ================= */
+/* ================= BNB POLLING ================= */
 
 const PAIR_ABI = [
   "function getReserves() view returns (uint112,uint112,uint32)",
@@ -147,7 +156,9 @@ async function getBnbReserve() {
   try {
     lastBnb = await getBnbReserve();
     console.log("🟡 BNB init:", lastBnb);
-  } catch {}
+  } catch (e) {
+    console.log("BNB init error:", e.message);
+  }
 })();
 
 
@@ -171,8 +182,8 @@ setInterval(async () => {
 
     lastBnb = cur;
 
-  } catch {
-    console.log("BNB poll error");
+  } catch (e) {
+    console.log("BNB poll error:", e.message);
   }
 
 }, 60_000);
